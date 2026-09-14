@@ -199,31 +199,58 @@
     }
 
     /* ------------------------
-       Status Badges
+       Room Presence Pills
        ------------------------ */
-    .badge {
-        display: inline-block;
-        padding: 0.15rem 0.45rem;
-        border-radius: 4px;
-        font-size: 0.85rem;
-        font-weight: bold;
-        margin-left: 0.3rem;
+    /* "Is there currently a monster/treasure in this room" - always
+       shown (independent of Show Roll Details), unlike the old
+       Success/Failure/Encounter/Safe roll-outcome badges these
+       replaced - see _render_presence_pills in game.py. Reuses
+       _ICON_MONSTER/_ICON_TREASURE, the same icons the Dungeon Map's
+       own badges already use, for one consistent "this icon means
+       this" language across the whole app. */
+    .presence-pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.25rem;
+        padding: 0.1rem 0.45rem;
+        border-radius: 10px;
+        font-size: 0.75rem;
         vertical-align: middle;
+        margin-left: 0.3rem;
     }
 
-    .badge-success {
-        background: #2e7d32;
-        color: #eaffea;
+    .presence-pill svg {
+        width: 11px;
+        height: 11px;
     }
 
-    .badge-fail {
-        background: #555;
-        color: #ddd;
+    /* Bold, and the warmer of the two - the dangerous fact of the
+       two is meant to be unmissable (see _render_presence_pills'
+       own docstring on why Monster outweighs Treasure here). */
+    .presence-pill-monster {
+        background: #5a2323;
+        color: #f0c4c4;
+        font-weight: bold;
     }
 
-    .badge-warning {
-        background: #b71c1c;
-        color: #ffecec;
+    .presence-pill-treasure {
+        background: #4a3a1a;
+        color: #e0c896;
+    }
+
+    /* The "Encounter:" section label itself, recolored the same
+       warning tone as .presence-pill-monster (not identical, just
+       the same family) whenever a monster is actually present - see
+       _render_room_card. Never applied to "Treasure:" - only Monster
+       gets this second, reinforcing signal. */
+    .section-label-danger {
+        color: #e08a8a;
+    }
+
+    .section-label-danger svg {
+        width: 13px;
+        height: 13px;
+        vertical-align: -2px;
     }
 
     /* ------------------------

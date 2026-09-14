@@ -2907,13 +2907,13 @@ def _render_treasure_check_result(
 ):
     """
     `result["success"]`, if explicitly set, overrides found_treasure's
-    truthiness for the Success/Failure badge specifically - normally
-    the two agree (found something <=> the roll succeeded), but the
-    "safe" context substitutes a mundane fallback item into
+    truthiness for the Success/Failure outcome text specifically -
+    normally the two agree (found something <=> the roll succeeded),
+    but the "safe" context substitutes a mundane fallback item into
     found_treasure even on a failed roll (see _generate_room), which
-    would otherwise make a failed safe check display as a "Success".
-    Every other context leaves this key unset, so the badge falls
-    back to the old bool(found) behavior - unaffected.
+    would otherwise make a failed safe check read as a "Success".
+    Every other context leaves this key unset, so it falls back to
+    the old bool(found) behavior - unaffected.
 
     `show_quality` (see _show_treasure_quality) is independent of
     `show_roll` - passed straight down to whichever of
@@ -2947,16 +2947,12 @@ def _render_treasure_check_result(
             )
         return f"<em>{fail_message}</em>"
 
-    badge = (
-        '<span class="badge badge-success">Success</span>'
-        if result.get("success", bool(found))
-        else '<span class="badge badge-fail">Failure</span>'
-    )
+    outcome = "Success" if result.get("success", bool(found)) else "Failure"
 
     html = (
         f"Search roll: "
         f'<span class="recent-roll">{_format_roll_total(result["raw_roll"], result["mod"])}</span> '
-        f'vs DC {result["treasure_dc_before"]} \u2192 {badge}<br><br>'
+        f'vs DC {result["treasure_dc_before"]} \u2192 {outcome}<br><br>'
     )
 
     if found:
@@ -3104,11 +3100,7 @@ def _render_encounter_result(result, show_treasure=True, show_rolls=True, show_q
             treasure_html = ""
         return f"{body}\n    {treasure_html}"
 
-    badge = (
-        '<span class="badge badge-warning">Encounter</span>'
-        if result["success"]
-        else '<span class="badge badge-fail">Safe</span>'
-    )
+    outcome = "Encounter" if result["success"] else "Safe"
 
     if result["success"] and result["monsters"] and result["monsters"]["groups"]:
         body = _render_monster_lines(result["monsters"], room_id=room_id, interactive=interactive)
@@ -3131,7 +3123,7 @@ def _render_encounter_result(result, show_treasure=True, show_rolls=True, show_q
         {_format_roll_total(result['raw_roll'], result['mod'])}
     </span>
     vs DC {result['dc_before']}
-    \u2192 {badge}
+    \u2192 {outcome}
     <br><br>
     {body}
     {treasure_html}
@@ -3277,6 +3269,41 @@ def _render_room_treasures(room, show_rolls, show_quality, room_id, interactive)
     return "".join(blocks)
 
 
+def _render_presence_pills(room):
+    """
+    Always-visible (independent of _show_roll_details) "is there
+    currently a monster/treasure here" indicators for the room card's
+    meta-line - reuses _room_has_monster/_room_has_treasure, the same
+    facts already driving the Dungeon Map's own badges (see
+    _render_dungeon_map), so the two stay in lockstep by construction
+    rather than via two separately-maintained checks. Each disappears
+    the moment the underlying fact stops being true (last monster
+    group removed, every treasure item collected) - "is there right
+    now", not "was there ever".
+
+    Monster gets more visual weight than Treasure - bold text here,
+    plus its own colored "Encounter" section label (see
+    _render_room_card) - since an active monster is the dangerous
+    fact of the two and is meant to be unmissable at a glance, before
+    reading a word of the room's description. Treasure only gets this
+    one pill.
+    """
+    pills = ""
+    if _room_has_monster(room):
+        pills += (
+            '<span class="presence-pill presence-pill-monster" '
+            'title="There is an active monster in this room">'
+            f'{_ICON_MONSTER}Monster</span>'
+        )
+    if _room_has_treasure(room):
+        pills += (
+            '<span class="presence-pill presence-pill-treasure" '
+            'title="There is treasure to collect in this room">'
+            f'{_ICON_TREASURE}Treasure</span>'
+        )
+    return pills
+
+
 def _render_room_card(room, show_rolls=True, show_quality=True, status_note="", status_extra_html="", room_id=None):
     """
     Renders a room's Location/Detail title, how it was determined,
@@ -3289,7 +3316,11 @@ def _render_room_card(room, show_rolls=True, show_quality=True, status_note="", 
     about a room, and the first thing meant to catch the eye - with
     the roll (or "chosen" note) that produced them demoted to a small
     meta-badge underneath, rather than a bare roll number sitting in
-    front of the name itself.
+    front of the name itself. The monster/treasure presence pills
+    (see _render_presence_pills) sit in that same meta-line, and -
+    unlike the roll badges - render regardless of `show_rolls`: "is
+    there a monster here" is a fact about the room, not a roll detail,
+    so it isn't gated behind the same setting that hides dice.
 
     `show_quality` (see _show_treasure_quality) is forwarded into
     _render_room_treasures/_render_encounter_result independent of
@@ -3314,6 +3345,7 @@ def _render_room_card(room, show_rolls=True, show_quality=True, status_note="", 
     nothing meaningful to mutate.
     """
     interactive = room_id is not None
+    room_has_monster = _room_has_monster(room)
 
     loc_badge = _render_room_roll_badge("Location", room["location_roll"], room["used_depth"], show_rolls)
     det_badge = _render_room_roll_badge("Detail", room["detail_roll"], room["used_depth"], show_rolls)
@@ -3323,15 +3355,27 @@ def _render_room_card(room, show_rolls=True, show_quality=True, status_note="", 
         meta_line += f" &middot; {status_note}"
     if status_extra_html:
         meta_line += f" {status_extra_html}"
+    presence_pills = _render_presence_pills(room)
+    if presence_pills:
+        meta_line += f" {presence_pills}"
     for badge in (loc_badge, det_badge):
         if badge:
             meta_line += f" {badge}"
 
     entering_html = ""
     if room.get("entering_encounter"):
+        # Bold either way, but only picks up the warning color (and
+        # its own small icon) when a monster is actually here right
+        # now - see room_has_monster above and _render_presence_
+        # pills' own docstring on why Monster gets this extra weight
+        # Treasure doesn't.
+        encounter_label = (
+            f'<strong class="section-label-danger">{_ICON_MONSTER} Encounter:</strong>'
+            if room_has_monster else '<strong>Encounter:</strong>'
+        )
         entering_html = f"""
         <hr>
-        <strong>Encounter:</strong><br>
+        {encounter_label}<br>
         {_render_encounter_result(room["entering_encounter"], show_treasure=False, show_rolls=show_rolls, show_quality=show_quality, room_id=room_id, interactive=interactive)}
         """
 

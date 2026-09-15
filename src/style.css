@@ -238,6 +238,28 @@
         color: #e0c896;
     }
 
+    /* Calmer variant of the Monster pill - a room with only
+       NON_HOSTILE_MONSTERS present (see _room_has_hostile_monster)
+       still gets a presence indicator, just not a warning one. A
+       neutral slate tone, deliberately outside both the red danger
+       family and the gold treasure family so it reads as its own,
+       third thing - "something's here" - not a quieter version of
+       either. */
+    .presence-pill-encounter {
+        background: #3a4550;
+        color: #c3d0da;
+    }
+
+    /* Muted variant of the Treasure pill - a room where the only
+       visible item(s) are "mundane"-quality junk (see
+       _room_has_valuable_treasure) still gets a pill - there's still
+       something to pick up - just desaturated compared to the real
+       gold one, so it doesn't read as "worthwhile loot" at a glance. */
+    .presence-pill-treasure-mundane {
+        background: #3a3630;
+        color: #a89a80;
+    }
+
     /* The "Encounter:" section label itself, recolored the same
        warning tone as .presence-pill-monster (not identical, just
        the same family) whenever a monster is actually present - see
@@ -786,6 +808,25 @@
     .dtree-badge-treasure {
         background: #c9b037;
         color: #3a3208;
+    }
+
+    /* Calmer variant - only NON_HOSTILE_MONSTERS present (see
+       _room_has_hostile_monster). Same neutral slate family as the
+       room card's own .presence-pill-encounter, for one consistent
+       "this is the calm one" language between the two surfaces. */
+    .dtree-badge-monster-calm {
+        background: #3a4550;
+        color: #c3d0da;
+    }
+
+    /* Muted variant - everything visible is "mundane"-quality junk
+       (see _room_has_valuable_treasure). Same desaturated family as
+       .presence-pill-treasure-mundane, distinct from both the real
+       gold badge above and the grey "unknown" one below - this one
+       IS known, it's just not worth much. */
+    .dtree-badge-treasure-mundane {
+        background: #5a4f2e;
+        color: #c9bfa0;
     }
 
     /* Same neutral grey as an unconnected Lift/Secret Passage badge

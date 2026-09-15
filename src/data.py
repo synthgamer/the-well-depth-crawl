@@ -112,11 +112,20 @@ MONSTERS = {
     "Ash Storm Hits": "1",
 }
 
-# These monsters never carry any treasure - an encounter consisting
-# only of these never triggers a monster-treasure roll (see
-# roll_monster_treasure() in game.py). If an encounter mixes one of
-# these with a monster not on this list, treasure is still rolled.
-MONSTERS_WITHOUT_TREASURE = {
+# These creatures aren't real combat threats - encounters with them
+# can be entirely peaceful (scavengers, gravediggers going about their
+# work, harmless critters), not monsters in the sense every other name
+# in MONSTERS is. Two consequences follow from that, both driven by
+# this same set:
+# - Mechanical: an encounter consisting only of these never triggers a
+#   monster-treasure roll (see roll_monster_treasure() in game.py). If
+#   an encounter mixes one of these with a monster not on this list,
+#   treasure is still rolled.
+# - Presentational: the UI's danger styling (see _room_has_hostile_
+#   monster in game.py) only applies once at least one *other* monster
+#   is also present - a room with only these in it reads as a calm
+#   encounter, not a warning.
+NON_HOSTILE_MONSTERS = {
     "Critters",
     "Gravediggers",
     "Exiles",

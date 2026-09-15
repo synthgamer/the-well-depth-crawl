@@ -33,7 +33,7 @@ from data import (
     SAFE_MUNDANE_CONTENTS, BULKY_TREASURE_TABLES,
     MINE_TREASURE_TABLES, ROCK_GARDEN_TREASURE_TABLES,
     CONSUMABLE_SUBTYPES, AMPULES_TABLE, POTIONS_TABLE, MISCELLANY_TABLE, ARTIFACTS_TABLE,
-    NEXT_LEVEL, ROLL_TWICE, MONSTERS, MONSTERS_WITHOUT_TREASURE, ENCOUNTER_TABLES,
+    NEXT_LEVEL, ROLL_TWICE, MONSTERS, NON_HOSTILE_MONSTERS, ENCOUNTER_TABLES,
 )
 
 Table = list[tuple[int, str]]
@@ -763,7 +763,7 @@ def roll_monster_treasure(monsters, level, level_modifiers, current_dc, default_
     name.
 
     Returns None if there's nothing to roll for at all (no encounter,
-    or every monster present is in MONSTERS_WITHOUT_TREASURE - e.g. a
+    or every monster present is in NON_HOSTILE_MONSTERS - e.g. a
     plain "Critters" swarm never carries loot, no roll even attempted).
     If an encounter mixes a treasure-less monster with one that can
     carry treasure, this still rolls (once) for the encounter as a
@@ -777,7 +777,7 @@ def roll_monster_treasure(monsters, level, level_modifiers, current_dc, default_
         return None
 
     monster_names = {group["monster"] for group in monsters["groups"]}
-    if not (monster_names - MONSTERS_WITHOUT_TREASURE):
+    if not (monster_names - NON_HOSTILE_MONSTERS):
         return None
 
     wealth_mod = level_modifiers.get("wealth", 0) if level else 0
@@ -1146,6 +1146,29 @@ def _room_has_monster(room) -> bool:
     return bool(monsters and monsters.get("groups"))
 
 
+def _room_has_hostile_monster(room) -> bool:
+    """
+    True if _room_has_monster(room) AND at least one present group is
+    an actual combat threat - not just NON_HOSTILE_MONSTERS (Critters/
+    Gravediggers/Exiles - see that set's own comment in data.py: these
+    aren't "monsters" in the dangerous sense, an encounter with only
+    these can be entirely peaceful). Drives the UI's danger styling
+    (the red "Monster" pill and "Encounter:" label, the Dungeon Map's
+    red monster badge) - conservatively: a room mixing one of these
+    with a real threat still counts as hostile, same as
+    roll_monster_treasure's own "does this encounter carry loot"
+    check treats a mix as "yes, roll for it".
+
+    A room where _room_has_monster is True but this is False (only
+    non-hostile creatures present) still gets a presence indicator -
+    just the calmer, non-red one - not no indicator at all.
+    """
+    if not _room_has_monster(room):
+        return False
+    groups = room["entering_encounter"]["monsters"]["groups"]
+    return any(g["monster"] not in NON_HOSTILE_MONSTERS for g in groups)
+
+
 # Contexts revealed together by a general room search ("ransack_room"
 # / room["ransacked"]) - as opposed to "safe", which needs its own
 # separate "pick the lock" action, or "open"/"monster"/"crevice",
@@ -1185,6 +1208,37 @@ def _room_has_treasure(room) -> bool:
             continue
         found = entry.get("found_treasure")
         if found and found.get("item_list"):
+            return True
+    return False
+
+
+def _room_has_valuable_treasure(room) -> bool:
+    """
+    True if _room_has_treasure(room) AND at least one visible entry
+    is actually worth getting excited about - quality anything other
+    than "mundane" (see TREASURE_QUALITY_TABLE - roll 0, the bottom
+    tier: broken pottery, spoilt food, rusty keys, ... flavor clutter,
+    not treasure). Covers the Safe's own failure consolation too
+    (SAFE_MUNDANE_CONTENTS) for free - that substitute is explicitly
+    tagged "quality": "mundane" already (see handle_action's
+    "open_safe"), so no separate check is needed for it.
+
+    Extra items (paint/consumables/artifacts - see generate_extra_
+    items) never appear on a "mundane" roll in the first place
+    (TREASURE_EXTRA_ITEMS_TABLE only starts at "valuable"), so there's
+    no edge case where a "mundane"-tier entry is secretly worth more
+    than its quality tier suggests.
+
+    Drives the UI's loot styling (the gold "Treasure" pill vs. a
+    muted one) - a room where _room_has_treasure is True but this is
+    False (only mundane-quality junk present) still gets a presence
+    indicator, just the quieter one, not no indicator at all.
+    """
+    for entry in room.get("treasures", []):
+        if not _treasure_entry_is_visible(room, entry):
+            continue
+        found = entry.get("found_treasure")
+        if found and found.get("item_list") and found.get("quality") != "mundane":
             return True
     return False
 
@@ -3273,34 +3327,59 @@ def _render_presence_pills(room):
     """
     Always-visible (independent of _show_roll_details) "is there
     currently a monster/treasure here" indicators for the room card's
-    meta-line - reuses _room_has_monster/_room_has_treasure, the same
-    facts already driving the Dungeon Map's own badges (see
+    meta-line - reuses _room_has_monster/_room_has_hostile_monster/
+    _room_has_treasure/_room_has_valuable_treasure, the same facts
+    already driving the Dungeon Map's own badges (see
     _render_dungeon_map), so the two stay in lockstep by construction
     rather than via two separately-maintained checks. Each disappears
     the moment the underlying fact stops being true (last monster
     group removed, every treasure item collected) - "is there right
     now", not "was there ever".
 
-    Monster gets more visual weight than Treasure - bold text here,
-    plus its own colored "Encounter" section label (see
-    _render_room_card) - since an active monster is the dangerous
-    fact of the two and is meant to be unmissable at a glance, before
-    reading a word of the room's description. Treasure only gets this
-    one pill.
+    Each of the two has its own two-tier severity, not just an on/off:
+    - Monster: red/bold "Monster" pill only once a genuinely hostile
+      creature is present (_room_has_hostile_monster); a room with
+      only NON_HOSTILE_MONSTERS (Critters/Gravediggers/Exiles) gets a
+      calmer, neutral "Encounter" pill instead - present, but not a
+      warning. Also gets its own colored "Encounter:" section label
+      (see _render_room_card) when hostile - Treasure never does,
+      regardless of tier - since an active threat is the more
+      dangerous fact of the two and is meant to be unmissable at a
+      glance, before reading a word of the room's description.
+    - Treasure: gold/bold "Treasure" pill once something actually
+      worth having is visible (_room_has_valuable_treasure); a room
+      with only mundane-quality junk (or a Safe's failure consolation
+      - see that helper's own docstring) gets a muted, quiet version
+      of the same pill instead - there's still something to pick up,
+      it's just not exciting.
     """
     pills = ""
     if _room_has_monster(room):
-        pills += (
-            '<span class="presence-pill presence-pill-monster" '
-            'title="There is an active monster in this room">'
-            f'{_ICON_MONSTER}Monster</span>'
-        )
+        if _room_has_hostile_monster(room):
+            pills += (
+                '<span class="presence-pill presence-pill-monster" '
+                'title="There is an active monster in this room">'
+                f'{_ICON_MONSTER}Monster</span>'
+            )
+        else:
+            pills += (
+                '<span class="presence-pill presence-pill-encounter" '
+                'title="Something is here, but it is not hostile">'
+                f'{_ICON_MONSTER}Encounter</span>'
+            )
     if _room_has_treasure(room):
-        pills += (
-            '<span class="presence-pill presence-pill-treasure" '
-            'title="There is treasure to collect in this room">'
-            f'{_ICON_TREASURE}Treasure</span>'
-        )
+        if _room_has_valuable_treasure(room):
+            pills += (
+                '<span class="presence-pill presence-pill-treasure" '
+                'title="There is treasure to collect in this room">'
+                f'{_ICON_TREASURE}Treasure</span>'
+            )
+        else:
+            pills += (
+                '<span class="presence-pill presence-pill-treasure-mundane" '
+                'title="There is something to collect in this room, though nothing of real value">'
+                f'{_ICON_TREASURE}Treasure</span>'
+            )
     return pills
 
 
@@ -3345,7 +3424,7 @@ def _render_room_card(room, show_rolls=True, show_quality=True, status_note="", 
     nothing meaningful to mutate.
     """
     interactive = room_id is not None
-    room_has_monster = _room_has_monster(room)
+    room_has_hostile_monster = _room_has_hostile_monster(room)
 
     loc_badge = _render_room_roll_badge("Location", room["location_roll"], room["used_depth"], show_rolls)
     det_badge = _render_room_roll_badge("Detail", room["detail_roll"], room["used_depth"], show_rolls)
@@ -3365,13 +3444,15 @@ def _render_room_card(room, show_rolls=True, show_quality=True, status_note="", 
     entering_html = ""
     if room.get("entering_encounter"):
         # Bold either way, but only picks up the warning color (and
-        # its own small icon) when a monster is actually here right
-        # now - see room_has_monster above and _render_presence_
+        # its own small icon) once a genuinely hostile monster is
+        # actually here right now - a room with only NON_HOSTILE_
+        # MONSTERS present stays plain, same as no encounter at all.
+        # See room_has_hostile_monster above and _render_presence_
         # pills' own docstring on why Monster gets this extra weight
         # Treasure doesn't.
         encounter_label = (
             f'<strong class="section-label-danger">{_ICON_MONSTER} Encounter:</strong>'
-            if room_has_monster else '<strong>Encounter:</strong>'
+            if room_has_hostile_monster else '<strong>Encounter:</strong>'
         )
         entering_html = f"""
         <hr>
@@ -4231,7 +4312,9 @@ def _render_dungeon_map(history, current_id, viewed_id=None):
         # would spoil the search before it happens, same reasoning as
         # _room_treasure_pending_search's docstring.
         has_monster = _room_has_monster(room)
+        has_hostile_monster = _room_has_hostile_monster(room)
         has_treasure = _room_has_treasure(room)
+        has_valuable_treasure = _room_has_valuable_treasure(room)
         pending_search = _room_treasure_pending_search(room)
         anchor_cx = cx - _TREE_NODE_WIDTH / 2
         anchor_cy = cy + _TREE_NODE_HEIGHT / 2
@@ -4242,10 +4325,21 @@ def _render_dungeon_map(history, current_id, viewed_id=None):
             else:
                 treasure_cx, treasure_cy = anchor_cx, anchor_cy
             if has_treasure:
+                # Muted variant once everything visible here is
+                # "mundane"-quality junk (or a Safe's own failure
+                # consolation) - see _room_has_valuable_treasure's
+                # docstring. Still a real marker, not the "?" below -
+                # there IS something to pick up, it's just not the
+                # exciting kind.
+                treasure_class = "dtree-badge-treasure" if has_valuable_treasure else "dtree-badge-treasure-mundane"
+                treasure_title = (
+                    "There's treasure here" if has_valuable_treasure
+                    else "There's something here, though nothing of real value"
+                )
                 badges_html.append(
-                    f'<span class="dtree-badge dtree-badge-treasure" '
+                    f'<span class="dtree-badge {treasure_class}" '
                     f'style="left:{treasure_cx - 10:.1f}px; top:{treasure_cy - 10:.1f}px; width:20px;" '
-                    f'title="There\'s treasure here">{_ICON_TREASURE}</span>'
+                    f'title="{treasure_title}">{_ICON_TREASURE}</span>'
                 )
             else:
                 badges_html.append(
@@ -4255,10 +4349,19 @@ def _render_dungeon_map(history, current_id, viewed_id=None):
                 )
 
         if has_monster:
+            # Calmer variant when nothing hostile is actually present
+            # (only NON_HOSTILE_MONSTERS - see _room_has_hostile_
+            # monster's own docstring) - still flags "something is
+            # here", just not as a warning.
+            monster_class = "dtree-badge-monster" if has_hostile_monster else "dtree-badge-monster-calm"
+            monster_title = (
+                "There's a monster here" if has_hostile_monster
+                else "Something is here, but it is not hostile"
+            )
             badges_html.append(
-                f'<span class="dtree-badge dtree-badge-monster" '
+                f'<span class="dtree-badge {monster_class}" '
                 f'style="left:{anchor_cx - 10:.1f}px; top:{anchor_cy - 10:.1f}px; width:20px;" '
-                f'title="There\'s a monster here">{_ICON_MONSTER}</span>'
+                f'title="{monster_title}">{_ICON_MONSTER}</span>'
             )
 
         boxes.append(

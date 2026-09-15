@@ -158,12 +158,6 @@ async function removeTreasureItem(roomId, itemId) {
     return dispatch("remove_treasure_item", null, roomId, itemId);
 }
 
-async function useSecretPassage() {
-    const el = document.getElementById("secret-passage-select");
-    const roomId = el ? el.value : null;
-    return dispatch("use_secret_passage", null, roomId || null);
-}
-
 async function useFireplace() {
     const el = document.getElementById("fireplace-select");
     const roomId = el ? el.value : null;

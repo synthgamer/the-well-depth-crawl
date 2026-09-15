@@ -1391,6 +1391,50 @@ def _roll_special_link_depth(current_depth):
     return current_depth + roll
 
 
+def _find_special_link_match(crawl_history, current_room):
+    """
+    Finds an existing room to auto-connect a Lift/Secret Passage to,
+    instead of rolling up a brand new one - same detail as
+    current_room (a matching counterpart, not just any nearby room)
+    and not already paired with something else (special_link_id is
+    None - a room that already has its own counterpart isn't
+    available to link to a second one).
+
+    Shallower candidates are preferred: among any that are strictly
+    shallower than current_room, the shallowest one wins. Only if
+    there's no shallower candidate at all does this fall back to
+    deeper ones instead - among those, the *deepest* one wins, the
+    same "reach as far as possible in whichever direction actually has
+    something" logic mirrored the other way. Ties (equal depth) are
+    broken by whichever room was created first (lowest id), purely
+    for a deterministic result - a tie here should be rare in
+    practice either way.
+
+    Fully automatic, no user choice involved - this replaced what used
+    to be a dropdown for picking among several candidates (see
+    handle_action's "use_lift"/"use_secret_passage" and
+    _render_special_connection_controls). Returns None if no matching
+    room exists at all yet, in which case the caller rolls up a new
+    one instead (_roll_special_link_depth + _create_linked_room).
+    """
+    same_detail_unlinked = [
+        r for r in crawl_history
+        if r["detail"] == current_room["detail"]
+        and r["id"] != current_room["id"]
+        and r.get("special_link_id") is None
+    ]
+
+    shallower = [r for r in same_detail_unlinked if r["used_depth"] < current_room["used_depth"]]
+    if shallower:
+        return min(shallower, key=lambda r: (r["used_depth"], r["id"]))
+
+    deeper = [r for r in same_detail_unlinked if r["used_depth"] > current_room["used_depth"]]
+    if deeper:
+        return max(deeper, key=lambda r: (r["used_depth"], -r["id"]))
+
+    return None
+
+
 # Whether a room's entering encounter should also roll (and reveal,
 # under the "monster" treasure context) loot carried by the monsters
 # themselves - see _generate_room. Turned off for now: the "monster"
@@ -2404,22 +2448,31 @@ def handle_action(
 
     elif action == "use_lift":
         # Only usable while standing in a room with the "Lift" detail
-        # (see _room_special_connection_kind). First use rolls a
-        # destination and permanently links the two rooms together
-        # (_create_linked_room); every use after that just travels
-        # there directly - no new roll, since it's the same fixed
-        # shaft each time.
+        # (see _room_special_connection_kind). First use looks for an
+        # existing, unlinked Lift room to connect to instead of
+        # rolling up a brand new one (see _find_special_link_match) -
+        # a shallower one preferred (the shallowest, if more than one
+        # qualifies), a deeper one only if no shallower match exists
+        # at all (the deepest, if more than one of those) - no user
+        # choice involved either way. Every use after that just
+        # travels the now-fixed link directly, since it's the same
+        # fixed shaft each time.
         current_room = _room_by_id(crawl_history, crawl_current_id)
         if current_room is not None and _room_special_connection_kind(current_room) == "lift":
             if current_room.get("special_link_id") is not None:
                 target_room = _room_by_id(crawl_history, current_room["special_link_id"])
             else:
-                target_depth = _roll_special_link_depth(current_room["used_depth"])
-                target_room, treasure_dc, encounter_dc = _create_linked_room(
-                    crawl_history, current_room, target_depth,
-                    level, level_modifiers, treasure_dc, encounter_dc,
-                    default_treasure_dc, default_encounter_dc,
-                )
+                target_room = _find_special_link_match(crawl_history, current_room)
+                if target_room is not None:
+                    current_room["special_link_id"] = target_room["id"]
+                    target_room["special_link_id"] = current_room["id"]
+                else:
+                    target_depth = _roll_special_link_depth(current_room["used_depth"])
+                    target_room, treasure_dc, encounter_dc = _create_linked_room(
+                        crawl_history, current_room, target_depth,
+                        level, level_modifiers, treasure_dc, encounter_dc,
+                        default_treasure_dc, default_encounter_dc,
+                    )
             if target_room is not None:
                 crawl_current_id = target_room["id"]
                 crawl_depth = target_room["used_depth"] + 1
@@ -2430,53 +2483,34 @@ def handle_action(
 
     elif action == "use_secret_passage":
         # Only usable while standing in a room with the "Secret
-        # Passage" detail. First use decides, based on depth (mirrors
-        # "Lift"'s own rule): at depth <= 5, roll up a brand new,
-        # deeper room and link to it (_create_linked_room); beyond
-        # that, connect to an existing, less-deep room instead - if
-        # there's more than one candidate, `room_form` picks which
-        # (the room card shows a dropdown for that); with none at all
-        # (an edge case - normally something shallower always
-        # exists), falls back to rolling a new one anyway. Every use
-        # after the first just travels the now-fixed link directly.
+        # Passage" detail. Same rule as "use_lift" now, just for
+        # this detail: first use looks for an existing, unlinked
+        # Secret Passage room to connect to instead of rolling up a
+        # brand new one (see _find_special_link_match) - a shallower
+        # one preferred (the shallowest, if more than one qualifies),
+        # a deeper one only if no shallower match exists at all (the
+        # deepest, if more than one of those) - no user choice
+        # involved either way (this used to offer a dropdown when
+        # there was more than one candidate; picking among them is
+        # now fully deterministic, so there's nothing left to choose).
+        # Every use after the first just travels the now-fixed link
+        # directly.
         current_room = _room_by_id(crawl_history, crawl_current_id)
         if current_room is not None and _room_special_connection_kind(current_room) == "secret_passage":
-            target_room = None
-
             if current_room.get("special_link_id") is not None:
                 target_room = _room_by_id(crawl_history, current_room["special_link_id"])
-
-            elif current_room["used_depth"] > 5:
-                candidates = [
-                    r for r in crawl_history
-                    if r["used_depth"] < current_room["used_depth"] and r["id"] != crawl_current_id
-                ]
-                if len(candidates) == 1:
-                    target_room = candidates[0]
-                elif len(candidates) > 1:
-                    chosen_id = _to_int_or_none(room_form)
-                    target_room = next((r for r in candidates if r["id"] == chosen_id), None)
-
+            else:
+                target_room = _find_special_link_match(crawl_history, current_room)
                 if target_room is not None:
                     current_room["special_link_id"] = target_room["id"]
-                    target_room["special_link_id"] = crawl_current_id
-                elif not candidates:
+                    target_room["special_link_id"] = current_room["id"]
+                else:
                     target_depth = _roll_special_link_depth(current_room["used_depth"])
                     target_room, treasure_dc, encounter_dc = _create_linked_room(
                         crawl_history, current_room, target_depth,
                         level, level_modifiers, treasure_dc, encounter_dc,
                         default_treasure_dc, default_encounter_dc,
                     )
-                # else: 2+ candidates but none chosen yet - the room
-                # card shows a dropdown; nothing happens until used.
-
-            else:
-                target_depth = _roll_special_link_depth(current_room["used_depth"])
-                target_room, treasure_dc, encounter_dc = _create_linked_room(
-                    crawl_history, current_room, target_depth,
-                    level, level_modifiers, treasure_dc, encounter_dc,
-                    default_treasure_dc, default_encounter_dc,
-                )
 
             if target_room is not None:
                 crawl_current_id = target_room["id"]
@@ -4401,10 +4435,15 @@ def _render_special_connection_controls(room, history):
     """
     "Use Lift" / "Use Secret Passage" / "Use Fireplace" - only ever
     called for the room the party is actually standing in (see
-    _render_crawling_view). Secret Passage and Fireplace can both
-    need a destination picked from more than one candidate before
-    they can be used at all - in that case, a small inline dropdown
-    accompanies the button instead of it working on its own.
+    _render_crawling_view). Fireplace is the only one of the three
+    that can still need a destination picked from more than one
+    candidate before it can be used at all - in that case, a small
+    inline dropdown accompanies the button instead of it working on
+    its own. Lift and Secret Passage never need this: which existing
+    room (if any) they connect to is fully automatic (see
+    _find_special_link_match) - shallowest match preferred, deepest
+    one only if no shallower match exists - no choice involved - so
+    their own buttons always work on their own.
     """
     kind = _room_special_connection_kind(room)
     if kind is None:
@@ -4417,23 +4456,6 @@ def _render_special_connection_controls(room, history):
         )
 
     if kind == "secret_passage":
-        # A destination choice is only ever needed the *first* time,
-        # and only once deep enough to reconnect to something
-        # shallower instead of rolling up a new room (see
-        # handle_action's "use_secret_passage").
-        if room.get("special_link_id") is None and room["used_depth"] > 5:
-            candidates = [
-                r for r in history
-                if r["used_depth"] < room["used_depth"] and r["id"] != room["id"]
-            ]
-            if len(candidates) > 1:
-                return (
-                    '<select id="secret-passage-select">'
-                    f'{_render_room_option_list(candidates)}'
-                    '</select>'
-                    '<button type="button" class="go-here-button" '
-                    f'onclick="useSecretPassage()">{_time_cost_icon_html()}Use Secret Passage</button>'
-                )
         return (
             '<button type="button" class="go-here-button" '
             f'onclick="runAction(\'use_secret_passage\')">{_time_cost_icon_html()}Use Secret Passage</button>'

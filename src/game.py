@@ -151,6 +151,33 @@ _ICON_LANTERN = (
     '<path d="M11 18.5h2v1.7h-2z" />'
     '</svg>'
 )
+# Traced from Tabler Icons like the six at the top of this block
+# (MIT License - see THIRD_PARTY_LICENSES.md, updated to cover these
+# two as well): "diamond" for _ICON_GEM, "package" for _ICON_CRATE.
+# Both used inline within a treasure entry's own small context label
+# (see _TREASURE_CONTEXT_ICONS/_render_room_treasures), not as a
+# Dungeon Map badge like the others - just a plain 13px glyph sitting
+# in text, so no separate wrapper span/CSS class needed the way
+# _time_cost_icon_html's button icons get.
+_ICON_GEM = (
+    '<svg viewBox="0 0 24 24" width="13" height="13" fill="none" '
+    'stroke="currentColor" stroke-width="2" stroke-linecap="round" '
+    'stroke-linejoin="round" aria-hidden="true">'
+    '<path d="M6 5h12l3 5l-8.5 9.5a.7 .7 0 0 1 -1 0l-8.5 -9.5l3 -5" />'
+    '<path d="M10 12l-2 -2.2l.6 -1" />'
+    '</svg>'
+)
+_ICON_CRATE = (
+    '<svg viewBox="0 0 24 24" width="13" height="13" fill="none" '
+    'stroke="currentColor" stroke-width="2" stroke-linecap="round" '
+    'stroke-linejoin="round" aria-hidden="true">'
+    '<path d="M12 3l8 4.5l0 9l-8 4.5l-8 -4.5l0 -9l8 -4.5" />'
+    '<path d="M12 12l8 -4.5" />'
+    '<path d="M12 12l0 9" />'
+    '<path d="M12 12l-8 -4.5" />'
+    '<path d="M16 5.25l-8 4.5" />'
+    '</svg>'
+)
 _SPECIAL_CONNECTION_ICONS = {
     "lift": _ICON_LIFT,
     "secret_passage": _ICON_SECRET_PASSAGE,
@@ -1261,6 +1288,36 @@ def _room_treasure_pending_search(room) -> bool:
         not _treasure_entry_is_visible(room, entry)
         for entry in room.get("treasures", [])
     )
+
+
+def _room_treasure_icon(room):
+    """
+    Which icon represents this room's treasure - in the Dungeon Map
+    badge (_render_dungeon_map) and the room card's presence pill
+    (_render_presence_pills) alike, so the two stay consistent with
+    each other. The plain chest (_ICON_TREASURE) by default, or a
+    more specific glyph (see _TREASURE_CONTEXT_ICONS) if a visible
+    entry's own context has one - checked in a fixed priority order
+    ("bulky" before the gem contexts) for a deterministic pick on the
+    rare room where more than one such context is visible at once;
+    no ordering here is obviously more "correct" than another, so
+    this is just a tiebreaker, not a meaningful ranking.
+
+    Only meaningful to call once _room_has_treasure(room) is already
+    known True - falls back to the default chest either way if
+    nothing visible matches a specific context, same as "nothing
+    visible at all" would.
+    """
+    visible_contexts = {
+        entry["context"] for entry in room.get("treasures", [])
+        if _treasure_entry_is_visible(room, entry)
+        and entry.get("found_treasure")
+        and entry["found_treasure"].get("item_list")
+    }
+    for context in ("bulky", "crevice", "pickaxe"):
+        if context in visible_contexts:
+            return _TREASURE_CONTEXT_ICONS[context]
+    return _ICON_TREASURE
 
 
 # (background, text) colors cycled across distinct Lift/Secret Passage
@@ -3264,6 +3321,23 @@ _TREASURE_CONTEXT_LABELS = {
     "pickaxe": "Extractable with a pickaxe",
 }
 
+# Which icon represents a room's treasure in the Dungeon Map badge and
+# the room card's presence pill (see _room_treasure_icon,
+# _render_presence_pills, _render_dungeon_map) - the plain chest
+# (_ICON_TREASURE) by default, but a couple of contexts get their own
+# more specific glyph instead, since "chest" doesn't really describe
+# what's actually there for these: "crevice"/"pickaxe" (both from
+# _roll_flat_chance_treasure() - same idea, something mineral pried
+# out of an opening in the rock, just different flavor text depending
+# on the location) get a gem; "bulky" gets a crate. Every other
+# context ("ransack"/"open"/"monster"/"safe") falls back to the
+# default chest via .get()'s own fallback.
+_TREASURE_CONTEXT_ICONS = {
+    "crevice": _ICON_GEM,
+    "pickaxe": _ICON_GEM,
+    "bulky": _ICON_CRATE,
+}
+
 
 def _render_room_treasures(room, show_rolls, show_quality, room_id, interactive):
     """
@@ -3385,7 +3459,9 @@ def _render_presence_pills(room):
       with only mundane-quality junk (or a Safe's failure consolation
       - see that helper's own docstring) gets a muted, quiet version
       of the same pill instead - there's still something to pick up,
-      it's just not exciting.
+      it's just not exciting. Either tier's icon can vary by context
+      too (gem/crate instead of the default chest - see
+      _room_treasure_icon), independent of the color tier.
     """
     pills = ""
     if _room_has_monster(room):
@@ -3402,17 +3478,18 @@ def _render_presence_pills(room):
                 f'{_ICON_MONSTER}Encounter</span>'
             )
     if _room_has_treasure(room):
+        treasure_icon = _room_treasure_icon(room)
         if _room_has_valuable_treasure(room):
             pills += (
                 '<span class="presence-pill presence-pill-treasure" '
                 'title="There is treasure to collect in this room">'
-                f'{_ICON_TREASURE}Treasure</span>'
+                f'{treasure_icon}Treasure</span>'
             )
         else:
             pills += (
                 '<span class="presence-pill presence-pill-treasure-mundane" '
                 'title="There is something to collect in this room, though nothing of real value">'
-                f'{_ICON_TREASURE}Treasure</span>'
+                f'{treasure_icon}Treasure</span>'
             )
     return pills
 
@@ -4364,7 +4441,9 @@ def _render_dungeon_map(history, current_id, viewed_id=None):
                 # consolation) - see _room_has_valuable_treasure's
                 # docstring. Still a real marker, not the "?" below -
                 # there IS something to pick up, it's just not the
-                # exciting kind.
+                # exciting kind. Icon shape itself can vary by context
+                # too (gem/crate instead of the default chest - see
+                # _room_treasure_icon), independent of this color tier.
                 treasure_class = "dtree-badge-treasure" if has_valuable_treasure else "dtree-badge-treasure-mundane"
                 treasure_title = (
                     "There's treasure here" if has_valuable_treasure
@@ -4373,7 +4452,7 @@ def _render_dungeon_map(history, current_id, viewed_id=None):
                 badges_html.append(
                     f'<span class="dtree-badge {treasure_class}" '
                     f'style="left:{treasure_cx - 10:.1f}px; top:{treasure_cy - 10:.1f}px; width:20px;" '
-                    f'title="{treasure_title}">{_ICON_TREASURE}</span>'
+                    f'title="{treasure_title}">{_room_treasure_icon(room)}</span>'
                 )
             else:
                 badges_html.append(
